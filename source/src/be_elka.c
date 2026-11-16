@@ -140,7 +140,7 @@ int be_play_file(const char *name, int vol)
 	return h;
 }
 
-/* Volume 0..15 (D80). The play object's own volume (PlayMelody_ChangeVolume, SWI 225, with PLAY_VOLUME as
+/* Volume 0..15 (D80). The play object's own volume (PlayMelody_SetVolume, SWI 225, with PLAY_VOLUME as
  * PlayMelody_GetVolume 4E4 reads it - D69: a 2-argument call muted the stream) is a level 0..5 that the firmware
  * turns into the Obs volume 0,1,4,8,12,15 (SoundAE_VolumeTranslationToObs FUN_a0595cc4); the media player sets the
  * Obs volume 0..15 itself (MediaCSM_SetOBSParamsForSounds: Obs_Sound_SetVolumeEx(obs, vol, 1)). So: the nearest
@@ -164,7 +164,7 @@ void be_volume(int h, int v)
 	if (!PlayMelody_GetVolume(h, &pv))
 		return;
 	pv.level = lvl[v & 15];
-	PlayMelody_ChangeVolume(h, pv);
+	PlayMelody_SetVolume(h, pv);
 	obs = obs_of(h);
 	if (obs)
 		Obs_Sound_SetVolumeEx((HObj)obs, (char)v, 1);
