@@ -19,8 +19,13 @@ typedef struct { CSM_RAM csm; int gui_id; } MAIN_CSM;
 
 enum { P_IDLE, P_WAIT_OLD, P_BUFFER, P_PLAY, P_CALL };
 
+/* EL71 (ELKA 240x320, RADIO_OBS) only: the main screen's "classic x65 player" skin (cfg.skin) */
+#ifdef RADIO_OBS
+#define RADIO_SKIN
+#endif
+
 /* ------------------------------------------------------------------ stations, radio.cfg (cfg.c) */
-#define MAX_ST		32
+#define MAX_ST		48
 #define ST_NAME		48
 #define ST_URL		200
 typedef struct { char name[ST_NAME], url[ST_URL]; } STATION;
@@ -33,10 +38,16 @@ typedef struct {
 	int start_sec;		/* buffered before the player starts */
 	int resume_sec;		/* buffered again after running dry */
 	int retry;		/* reconnect by itself when the stream breaks */
+#ifdef RADIO_LOG
 	int log;		/* radio-log.txt */
+#endif
 	int def;		/* default station (shown at start), -1 = the first */
 	int autoplay;		/* play the default station at start */
 	int fmt;		/* SG output format (be_fmt_name) */
+	int card;		/* ELKA: the virtual file in the elf's folder, not 1:\FasoleyRadio (hand-set "card=1", D92) */
+#ifdef RADIO_SKIN
+	int skin;		/* main screen look: 0 modern, 1 classic x65 player (screen.c) */
+#endif
 } CFG;
 extern CFG cfg;
 void cfg_load(void);
@@ -46,7 +57,14 @@ int stations_save(void);		/* 0 = could not write */
 int station_set(int i, const char *name, const char *url);	/* i == nst: add; 0 = full */
 void station_del(int i);
 
-/* ------------------------------------------------------------------ log (app.c) */
+/* ------------------------------------------------------------------ log (app.c)
+ * RADIO_LOG (radio-log.txt, radio-net.txt, the hook's event ring, setting "dbg"): emulator builds only (CMakeLists;
+ * tests/emu check the log lines) and FasoleyRadio_ELKA_dbg.elf (RADIO_LOG_ALWAYS: always on, no "dbg" setting).
+ * Other phone builds have no log: rlog() is nothing, its arguments are not evaluated. */
+#if defined(RADIO_LOG) && !defined(RADIO_LOG_ALWAYS)
+#define RADIO_LOG_CFG 1			/* setting "dbg" + menu item "Log" */
+#endif
+#ifdef RADIO_LOG
 extern char log_line[400];
 extern int log_n, log_sync;
 void log_head(void);
@@ -55,12 +73,18 @@ void log_flush(void);
 void log_apply(void);			/* cfg.log changed */
 void log_events(void);			/* the hook's events since the last call */
 #define rlog(...) do { log_head(); log_commit(sprintf(log_line + log_n, __VA_ARGS__)); } while (0)
+#else
+#define rlog(...) do { } while (0)
+#define log_flush() do { } while (0)
+#define log_events() do { } while (0)
+#endif
 
 /* ------------------------------------------------------------------ player (app.c) */
 extern char elf_dir[128];
 extern MAIN_CSM *main_csm;
 extern MP3S *dec;
 extern int fw, pstate, station, handle, started, volume, kbps, rate, chans;
+extern uint32_t play_t0;	/* radio_ms() when the current station first started playing, 0 = not yet */
 extern const char *note;		/* last problem (cp1251), shown when stopped */
 extern uint32_t rx_bps;			/* network bytes/s (smoothed) */
 extern int rx_secs;
@@ -80,6 +104,7 @@ uint32_t stream_bps(void);		/* MP3 bytes/s of the stream (128k when not known) *
 int screen_create(MAIN_CSM *csm);	/* the main screen (screen.c), GUI id */
 void screen_tick(void);			/* MMI, every 0.1 s: redraw when something shown changed */
 void screen_redraw(void);		/* at once (after a key) */
+int screen_on_top(void);			/* our main screen is the top GUI */
 void screen_free(void);			/* the CSM closes */
 extern int screen_st;			/* station shown (chosen with left/right) */
 void menu_open(void);			/* native menus (menus.c), from a key handler of ours only */

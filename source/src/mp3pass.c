@@ -33,20 +33,45 @@ static int frame_samples(const uint8_t *h)
 	return ((h[1] >> 3) & 3) == 3 ? 1152 : 576;
 }
 
-/* silent frame from a real header of the stream: no CRC, no padding, the same rate/mode/bitrate */
+/* CRC-16 of an MPEG audio frame (poly 0x8005, init 0xFFFF) over bytes 2-3 and the side info */
+static uint16_t crc16_bits(uint16_t crc, const uint8_t *p, int n)
+{
+	while (n--) {
+		int i;
+		crc ^= (uint16_t)(*p++ << 8);
+		for (i = 0; i < 8; i++)
+			crc = crc & 0x8000 ? (uint16_t)((crc << 1) ^ 0x8005) : (uint16_t)(crc << 1);
+	}
+	return crc;
+}
+
+/* silent frame from a real header of the stream: the same header (D150: CRC bit, mode extension, copyright,
+ * original, emphasis kept, so the firmware's parser sees one format; D149 and before cleared them), no
+ * padding; zero side info (+ its CRC when the stream has CRCs) */
 static void make_silent(MP3S *s, const uint8_t *h)
 {
-	int len, rate, ch;
+	int len, rate, ch, si;
 
 	bzero_(s->sil, sizeof(s->sil));
 	s->sil[0] = 0xFF;
-	s->sil[1] = h[1] | 1;		/* protection bit 1 = no CRC */
+	s->sil[1] = h[1];
 	s->sil[2] = h[2] & ~2;		/* no padding */
-	s->sil[3] = h[3] & 0xC0;	/* channel mode; no mode extension, no copyright/emphasis */
+	s->sil[3] = h[3];
 	len = mp3_frame_len(s->sil, &rate, &ch, 0);
 	if (len <= 4 || len > MP3_MAXFRAME) {
 		s->sil_len = 0;
 		return;
+	}
+	if (!(h[1] & 1)) {		/* protected: CRC over header bytes 2-3 + side info, at bytes 4-5 */
+		uint16_t crc;
+		if (((h[1] >> 3) & 3) == 3)
+			si = (h[3] >> 6) == 3 ? 17 : 32;
+		else
+			si = (h[3] >> 6) == 3 ? 9 : 17;
+		crc = crc16_bits(0xFFFF, s->sil + 2, 2);
+		crc = crc16_bits(crc, s->sil + 6, si);
+		s->sil[4] = (uint8_t)(crc >> 8);
+		s->sil[5] = (uint8_t)crc;
 	}
 	s->sil_len = len;
 	s->sil_pcm = frame_samples(s->sil) * ch * 2;
@@ -81,6 +106,8 @@ void mp3s_start(MP3S *s, int rate, int ch, uint32_t resume_at)
 	s->fmt_changed = 0;
 	s->fpos = s->flen = 0;
 	silent_from_ring(s);
+	s->hold = 0;
+	s->xing = 0;	/* D150: no Xing frame (the parser treats a stream without it as CBR, RE-EL71.txt) */
 	s->running = 1;
 }
 
@@ -138,9 +165,47 @@ static int take_frame(MP3S *s)
 	}
 }
 
+static void be32(uint8_t *p, uint32_t v)
+{
+	p[0] = (uint8_t)(v >> 24);
+	p[1] = (uint8_t)(v >> 16);
+	p[2] = (uint8_t)(v >> 8);
+	p[3] = (uint8_t)v;
+}
+
+/* D140: the first frame is a silent frame carrying a "Xing" tag (frames + bytes of a 255 MB stream), as LAME
+ * writes: in D139 the firmware's MP3 parser (PacketVideo, "Xing" at A11FBE58) walked the whole endless input
+ * on Obs_Prepare for 44.1 kHz streams (no PrepareCon, ~2 MB/s reads). Side info is zero: decodes to silence. */
+static int xing_frame(MP3S *s)
+{
+	int off;
+	if (!s->sil_len || s->sil_len < 4 + 32 + 16)
+		return 0;
+	ring_cpy(s->fr, s->sil, (uint32_t)s->sil_len);
+	if (((s->sil[1] >> 3) & 3) == 3)		/* MPEG1 */
+		off = (s->sil[3] >> 6) == 3 ? 4 + 17 : 4 + 32;
+	else
+		off = (s->sil[3] >> 6) == 3 ? 4 + 9 : 4 + 17;
+	s->fr[off] = 'X';
+	s->fr[off + 1] = 'i';
+	s->fr[off + 2] = 'n';
+	s->fr[off + 3] = 'g';
+	be32(s->fr + off + 4, 3);			/* frames + bytes present */
+	be32(s->fr + off + 8, 0x0FF00000u / (uint32_t)s->sil_len);
+	be32(s->fr + off + 12, 0x0FF00000u);
+	s->flen = s->sil_len;
+	s->fpos = 0;
+	return 1;
+}
+
 static void next_frame(MP3S *s)
 {
-	if (s->running) {
+	if (s->xing && s->running) {
+		s->xing = 0;
+		if (xing_frame(s))
+			return;
+	}
+	if (s->running && !s->hold) {		/* D151: hold = silent frames, the current frame was finished */
 		if (s->waiting && ring_used(s->net) >= s->resume_at)
 			s->waiting = 0;
 		if (!s->waiting) {

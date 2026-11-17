@@ -52,8 +52,10 @@ static FWADDR fw_list[] = {
 #define DATA_SIZE	0x7FF00000u	/* "endless" file; the elf stops playback itself */
 #define MAX_OBJ		4
 
-volatile uint32_t vs_reads, vs_seen, vs_detects, vs_nonzero;
+volatile uint32_t vs_reads;
 const char *vs_fail;
+#ifdef RADIO_LOG
+volatile uint32_t vs_seen, vs_detects, vs_nonzero;
 VS_EV vs_ev[VS_EV_N];
 volatile uint32_t vs_ev_wr, vs_ev_rd, vs_ev_lost;
 volatile uint16_t vs_now;
@@ -86,6 +88,12 @@ static void ev(int kind, int slot, void *obj, uint32_t a, uint32_t b, uint32_t r
 	e->r = r;
 	vs_ev_wr = w + 1;
 }
+#else
+static inline void ev(int kind, int slot, void *obj, uint32_t a, uint32_t b, uint32_t r)
+{
+	(void)kind, (void)slot, (void)obj, (void)a, (void)b, (void)r;
+}
+#endif
 
 static const FWADDR *fw;
 static uint32_t prev[VT_SLOTS];		/* table before us (s65-mp3 det_* or stock) */
@@ -177,7 +185,7 @@ int vs_live(void)
 /* object of VS_NAME seen for the first time through the global table */
 static int detect(void *obj)
 {
-	vs_seen++;
+	VS_DIAG(vs_seen++;)
 	if (FLD(obj, OBJ_VT, uint32_t) != fw->vt_ram)
 		return 0;	/* ours already, or another table (s65-mp3's own, stock flash) */
 	{
@@ -188,10 +196,12 @@ static int detect(void *obj)
 		if (!fill_fn || pp < 0xA0000000u || pp >= 0xB0000000u || !is_ours_name((const char *)pp))
 #endif
 		{
+#ifdef RADIO_LOG
 			if (others_logged < 60) {
 				others_logged++;
 				ev(EV_OTHER, 0, obj, pp, FLD(obj, OBJ_SIZE, uint32_t), (uint32_t)fill_fn);
 			}
+#endif
 			return 0;
 		}
 	}
@@ -199,7 +209,7 @@ static int detect(void *obj)
 		ev(EV_TRACKFAIL, 0, obj, 0, 0, 0);
 		return 0;
 	}
-	vs_detects++;
+	VS_DIAG(vs_detects++;)
 	ev(EV_TAKEN, 0, obj, FLD(obj, OBJ_PATH, uint32_t), FLD(obj, OBJ_SIZE, uint32_t), FLD(obj, OBJ_POS, uint32_t));
 	FLD(obj, OBJ_VT, uint32_t *) = ours;
 	FLD(obj, OBJ_SIZE, uint32_t) = VS_HDR + DATA_SIZE;
@@ -230,11 +240,13 @@ static int vread(void *obj, uint8_t *buf, int len)
 		if (enabled && fill_fn) {
 			fill_fn(fill_ctx, buf + done, len - done);
 			vs_reads++;
+#ifdef RADIO_LOG
 			for (k = done; k < (uint32_t)len; k += 4)
 				if (buf[k] | buf[k + 1]) {
 					vs_nonzero++;
 					break;
 				}
+#endif
 		} else
 			vzero(buf + done, len - done);
 		done = len;
@@ -396,8 +408,10 @@ int vs_install(void)
 	if (f == sizeof(fw_list) / sizeof(fw_list[0]))
 		return VS_FW_NONE;
 	fw = &fw_list[f];
+#ifdef RADIO_LOG
 	for (i = 0; i < VT_SLOTS; i++)
 		vs_table[i] = GT[i];
+#endif
 #ifndef HOST_TEST
 	{	/* the code we call / chain to must be the one we know (byte-identical on S65v58 and SK65v50) */
 		static const uint8_t alloc_code[12] = { 0x00, 0x10, 0xa0, 0xe1, 0x14, 0x00, 0x9f, 0xe5, 0x60, 0xff, 0xff, 0xea };
@@ -416,7 +430,11 @@ int vs_install(void)
 		}
 #endif
 	for (i = 0; i < VT_SLOTS; i++)
-		prev[i] = vs_table[i] = GT[i];
+		prev[i] = GT[i];
+#ifdef RADIO_LOG
+	for (i = 0; i < VT_SLOTS; i++)
+		vs_table[i] = prev[i];
+#endif
 	for (i = 0; i < VT_SLOTS; i++)
 		ours[i] = prev[i];
 	ours[VT_DESTROY] = (uint32_t)s_destroy;
@@ -471,7 +489,7 @@ void vs_start(vs_fill_f fill, void *ctx, int rate, int ch)
 	enabled = 0;
 	fill_fn = fill;
 	fill_ctx = ctx;
-	ev_budget = EV_PER_START;
+	VS_DIAG(ev_budget = EV_PER_START;)
 	vcpy(hdr, "RIFF\0\0\0\0WAVEfmt \x10\0\0\0\x01\0", 22);
 	v = 36 + DATA_SIZE;
 	vcpy(hdr + 4, &v, 4);

@@ -25,6 +25,8 @@ typedef struct {
 	volatile int bitrate;		/* kbps of the last frame */
 	int fpos, flen;			/* frame being served: fr[fpos .. flen) */
 	int sil_len, sil_pcm;		/* silent frame: length, its PCM bytes */
+	int xing;			/* D140: a Xing frame goes first (frame count: no duration scan on prepare) */
+	volatile int hold;		/* D151: silent frames from the next frame boundary on, ring untouched (Obs prepare) */
 	uint8_t fr[MP3_MAXFRAME];
 	uint8_t sil[MP3_MAXFRAME];
 } MP3S;

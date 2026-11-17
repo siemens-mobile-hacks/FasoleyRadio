@@ -6,6 +6,7 @@ project(radio C ASM)
 # Fasoley Radio: internet radio elf (Fasoley Radio https stream + Radio Paradise + stations.txt). Network = ENIP sockets (bt-pan or GPRS).
 # Common core (RADIO_CORE): player state machine + CSM + log (app.c), radio.cfg/stations.txt (cfg.c), own main
 #   screen (screen.c), native menus (menus.c), HTTP/ICY (radio.c, icy.c), TLS (link.c).
+# RADIO_LOG (radio-log.txt etc.): the emulator builds only, tests/emu check the log; phone builds have no log.
 # Two backends (backend.h), two elfs:
 # SG (S65v58 / SK65v50) FasoleyRadio.elf: src/be_sg.c - firmware player on a virtual WAV (patch 10931), MP3
 #   decoded by Helix (third_party/helix), src/mp3s.c + src/vstream.c.
@@ -22,6 +23,8 @@ set_source_files_properties(${BEARSSL_SRC} PROPERTIES COMPILE_OPTIONS
 set(RADIO_CORE src/fwlib.c src/app.c src/cfg.c src/screen.c src/menus.c src/link.c src/radio.c src/icy.c src/mp3hdr.c src/libc.c)
 set(RADIO_SRC ${RADIO_CORE} src/be_sg.c src/mp3s.c src/vstream.c)
 set(RADIO_ELKA_SRC ${RADIO_CORE} src/be_elka.c src/mp3pass.c src/vstream_nsg.c src/dns.c)
+# D129: EL71v45 plays through an Obs object of its own (src/vstream_obs.c, RADIO_OBS) instead of PlayFile + drive hook
+set(RADIO_OBS_SRC ${RADIO_CORE} src/be_elka.c src/mp3pass.c src/vstream_obs.c src/dns.c)
 
 # Helix: -O2 ARM (the decode runs in the Obs task, as in the s65-mp3 VKP); polyphase filter from Helix's ARM asm
 # (arm/asmpoly_gcc.S, same output as the C one, ~25 % less time; HELIX_ASMPOLY drops the C versions)
@@ -50,12 +53,22 @@ set_target_properties(radio_SG PROPERTIES OUTPUT_NAME "FasoleyRadio")
 
 # elfloader3-linux (elfloader3-sg): no firmware player (a timer takes the PCM at the real rate) and no
 # sockets (src/net_emu.c serves the captured streams from files); tests/emu/run.sh
-radio_target(radio_EMU src/net_emu.c RADIO_EMU)
+radio_target(radio_EMU src/net_emu.c RADIO_EMU RADIO_LOG)
 set_target_properties(radio_EMU PROPERTIES OUTPUT_NAME "FasoleyRadio_EMU")
 
 function(radio_elka_target name net)
-	add_executable(${name} ${RADIO_ELKA_SRC} ${net} ${BEARSSL_SRC})
-	target_sdk_setup(${name} ELKA)
+	radio_nsg_target(${name} ELKA ${net} RADIO_OBS ${ARGN})
+endfunction()
+
+# platform ELKA (EL71v45, 240x320) or NSG (S75v52: NewSGOLD without ELKA, 132x176; same backend)
+function(radio_nsg_target name platform net)
+	if ("RADIO_OBS" IN_LIST ARGN)
+		set(srcs ${RADIO_OBS_SRC})
+	else()
+		set(srcs ${RADIO_ELKA_SRC})
+	endif()
+	add_executable(${name} ${srcs} ${net} ${BEARSSL_SRC})
+	target_sdk_setup(${name} ${platform})
 	target_include_directories(${name} PRIVATE src ${BEARSSL_DIR}/inc ${BEARSSL_DIR}/src "${CMAKE_CURRENT_BINARY_DIR}")
 	target_compile_definitions(${name} PRIVATE __NO_LIBC RADIO_PASS ${ARGN})
 	target_compile_options(${name} BEFORE PUBLIC -std=gnu11 -Wall -Werror)
@@ -65,9 +78,21 @@ endfunction()
 
 radio_elka_target(radio_ELKA src/net_elka.c)
 set_target_properties(radio_ELKA PROPERTIES OUTPUT_NAME "FasoleyRadio_ELKA")
+# FasoleyRadio_ELKA_dbg.elf: the EL71 build with the log always on (0:\radio-log.txt, flushed every second; the
+# per-second line has the free heap); no "dbg" setting or menu item
+radio_elka_target(radio_ELKA_DBG src/net_elka.c RADIO_LOG RADIO_LOG_ALWAYS)
+set_target_properties(radio_ELKA_DBG PROPERTIES OUTPUT_NAME "FasoleyRadio_ELKA_dbg")
+# the PlayFile + drive-hook EL71 build (D122 way), kept until the phone confirms Obs: cmake --build build --target radio_ELKA_FS
+radio_nsg_target(radio_ELKA_FS ELKA src/net_elka.c)
+set_target_properties(radio_ELKA_FS PROPERTIES OUTPUT_NAME "FasoleyRadio_ELKA_FS" EXCLUDE_FROM_ALL TRUE)
 # elfloader3-linux (ELKA, 240x320): src/net_emu.c + a timer that takes the MP3 at the real rate
-radio_elka_target(radio_ELKA_EMU src/net_emu.c RADIO_EMU)
+radio_elka_target(radio_ELKA_EMU src/net_emu.c RADIO_EMU RADIO_LOG)
 set_target_properties(radio_ELKA_EMU PROPERTIES OUTPUT_NAME "FasoleyRadio_ELKA_EMU")
+# S75v52 (NSG): FasoleyRadio_NSG.elf; _NSG_EMU for elfloader3-nsg (132x176)
+radio_nsg_target(radio_NSG NSG src/net_elka.c)
+set_target_properties(radio_NSG PROPERTIES OUTPUT_NAME "FasoleyRadio_NSG")
+radio_nsg_target(radio_NSG_EMU NSG src/net_emu.c RADIO_EMU RADIO_LOG)
+set_target_properties(radio_NSG_EMU PROPERTIES OUTPUT_NAME "FasoleyRadio_NSG_EMU")
 
 set(BUILD_ID_HEADER "${CMAKE_CURRENT_BINARY_DIR}/build_id.h")
 add_custom_target(bump_build_id ALL

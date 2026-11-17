@@ -2,7 +2,8 @@
  * Settings and stations (MMI only).
  *
  * <elf folder>\radio.cfg: "key=value" lines (older builds wrote just "fmt=N", still read):
- *   vol=3 ring=512 start=3 resume=2 retry=1 dbg=0 def=0 auto=0 fmt=5
+ *   vol=3 ring=512 start=3 resume=2 retry=1 def=0 auto=0 fmt=5 (+ dbg=0: emulator builds only, RADIO_LOG)
+ *   skin=0/1 (EL71 only: main screen modern / classic x65 player)
  * <elf folder>\stations.txt: "Name = URL" or just a URL per line, # = comment. Without the first line
  *   "#!stations" (a file written by hand) its stations come after the built-in ones; the elf writes the
  *   whole list with that line (built-in ones included, so they can be edited and deleted too).
@@ -23,10 +24,57 @@ static const struct { const char *name, *url; } builtin[] = {
 	{ "Radio Paradise 32k", "http://localhost:18080/mp3-32" },
 	{ "Radio Paradise 128k", "http://127.0.0.1:18080/mp3-128" },
 #else
+#if !defined(SGOLD) && !defined(RADIO_OBS)	/* D185: > 190k: not on EL71 and S65/SK65 (user) */
+	{ "Party FM 320k", "http://stream.partyfm.dk/Party320/" },
+#endif
+	{ "Relax on Radio 96k", "http://streaming.radiodancefloor.it:443/" },
+#if !defined(SGOLD) && !defined(RADIO_OBS)	/* D185: > 190k: not on EL71 and S65/SK65 (user) */
+	{ "Kink 90's 192k", "https://25243.live.streamtheworld.com/KINK_90S_SC" },
+#endif
+	/* D168: top-voted MP3 stations of radio-browser.info (alondrilich.github.io/radio-playlists/top) */
+	{ "MANGORADIO 128k", "https://mangoradio.stream.laut.fm/mangoradio" },
+	{ "Dance Wave! 128k", "https://dancewave.online/dance.mp3" },
+#ifndef SGOLD	/* D185: > 128k: not on S65/SK65 (user) */
+	{ "Classic Vinyl HD 320k", "https://icecast.walmradio.com:8443/classic" },
+#endif
+#if !defined(SGOLD) && !defined(RADIO_OBS)	/* D185: > 190k: not on EL71 and S65/SK65 (user) */
+	{ "WALM 2 HD 320k", "https://icecast.walmradio.com:8443/walm2" },
+#endif
+	{ "RFE/RL Radio Farda", "http://rfe21.akacast.akamaistream.net/7/751/437779/v1/ibb.akacast.akamaistream.net/rfe21" },
+#if !defined(SGOLD) && !defined(RADIO_OBS)	/* D185: > 190k: not on EL71 and S65/SK65 (user) */
+	{ "101 SMOOTH JAZZ 192k", "http://jking.cdnstream1.com/b22139_128mp3" },
+#endif
+	{ "RFI Afrique 64k", "http://live02.rfi.fr/rfiafrique-64.mp3" },
+	{ "Mosaique FM 90k", "http://radio.mosaiquefm.net:8000/mosalive" },
+	{ "parsa 64k", "http://parsa.icdndhcp.com:18000/stream" },
+	{ "Faz 128k", "http://www.radiofaaz.com:8000/radiofaaz" },
+	{ "Your Classical - Relax 128k", "http://relax.stream.publicradio.org/relax.mp3" },
+	{ ".977 Country 128k", "http://15113.live.streamtheworld.com:3690/977_COUNTRY_SC" },
+	{ "RFI-Afrique 96k", "http://live02.rfi.fr/rfiafrique-96k.mp3" },
+	{ "Радио Русские Песни 128k", "http://listen.rusongs.ru/ru-mp3-128" },
+	{ ".977 80s 128k", "http://29318.live.streamtheworld.com/977_80_SC" },
+	{ ".977 Hitz 128k", "http://14123.live.streamtheworld.com/977_HITS_SC" },
+	{ "Dance Wave Retro! 128k", "https://dancewave.online/retrodance.mp3" },
+#if !defined(SGOLD) && !defined(RADIO_OBS)	/* D185: > 190k: not on EL71 and S65/SK65 (user) */
+	{ "Ambient Sleeping Pill 256k", "http://radio.stereoscenic.com/asp-h" },
+#endif
+	{ "Frisky 96k", "http://stream2.friskyradio.com/frisky_mp3_hi" },
+	{ "Шансон Радио", "http://chanson.hostingradio.ru:8041/chanson128.mp3" },
+	{ "Дорожное радио", "http://dorognoe.hostingradio.ru:8000/dorognoe" },
+	{ "LBC Radio 48k", "http://media-sov.musicradio.com/LBC973MP3Low" },
+#if !defined(SGOLD) && !defined(RADIO_OBS)	/* D185: > 190k: not on EL71 and S65/SK65 (user) */
+	{ "Вести FM 320k", "http://icecast.vgtrk.cdnvideo.ru/vestifm" },
+#endif
+	{ "Европа плюс", "http://ep128server.streamr.ru:8030/ep128" },
+#if !defined(SGOLD) && !defined(RADIO_OBS)	/* D185: > 190k: not on EL71 and S65/SK65 (user) */
+	{ "Intense Radio Dance 256k", "https://secure.live-streams.nl/main" },
+#endif
+	{ "Radio Sarcheshme 96k", "http://sarcheshmeh.icdndhcp.com:18452/stream" },
+	{ "Radio Caroline 128k", "http://78.129.202.200:8040/;" },
+	{ "SomaFM Groove Salad 128k", "https://ice5.somafm.com/groovesalad-128-mp3" },
+#ifndef SGOLD	/* D185: > 128k: not on S65/SK65 (user) */
 	{ "Fasoley Radio", "https://fasoley.net/radio.mp3" },
-	{ "RFI Monde 64k", "https://rfiafrique64k.ice.infomaniak.ch/rfimonde-64.mp3" },	/* 22.05 kHz stereo */
-	{ "Radio Paradise 32k", "http://stream.radioparadise.com/mp3-32" },
-	{ "Radio Paradise 128k", "http://stream.radioparadise.com/mp3-128" },
+#endif
 #endif
 };
 #define NBUILTIN	((int)(sizeof(builtin) / sizeof(builtin[0])))
@@ -121,10 +169,18 @@ void cfg_load(void)
 	cfg.start_sec = 3;
 	cfg.resume_sec = 2;
 	cfg.retry = 1;
-	cfg.log = 0;			/* key "dbg": old files' log=1 is ignored */
+#ifdef RADIO_LOG_ALWAYS
+	cfg.log = 1;			/* FasoleyRadio_ELKA_dbg.elf */
+#elif defined(RADIO_LOG)
+	cfg.log = 0;			/* key "dbg" (emulator builds only; phone builds ignore it); old files' log=1 is ignored */
+#endif
 	cfg.def = 0;
 	cfg.autoplay = 0;
 	cfg.fmt = -1;			/* the phone's default (be_setup) */
+	cfg.card = 0;
+#ifdef RADIO_SKIN
+	cfg.skin = 0;
+#endif
 	if (!(buf = read_file("radio.cfg", 1024, &n)))
 		return;
 	while ((l = next_line(buf, n, &i))) {
@@ -146,12 +202,20 @@ void cfg_load(void)
 			cfg.resume_sec = clamp(num(v), 1, 30);
 		else if (!strcmp(l, "retry"))
 			cfg.retry = num(v) != 0;
+#ifdef RADIO_LOG_CFG
 		else if (!strcmp(l, "dbg"))
 			cfg.log = num(v) != 0;
+#endif
 		else if (!strcmp(l, "def"))
 			cfg.def = num(v);
 		else if (!strcmp(l, "auto"))
 			cfg.autoplay = num(v) != 0;
+		else if (!strcmp(l, "card"))
+			cfg.card = num(v) != 0;
+#ifdef RADIO_SKIN
+		else if (!strcmp(l, "skin"))
+			cfg.skin = num(v) != 0;
+#endif
 		else if (!strcmp(l, "fmt") && *v >= '0' && *v <= '9')
 			cfg.fmt = num(v);
 	}
@@ -161,10 +225,18 @@ void cfg_load(void)
 void cfg_save(void)
 {
 	static char b[200];
-	int n = sprintf(b, "vol=%d\r\nring=%d\r\nstart=%d\r\nresume=%d\r\nretry=%d\r\ndbg=%d\r\ndef=%d\r\nauto=%d\r\n",
-			cfg.vol, cfg.ring_kb, cfg.start_sec, cfg.resume_sec, cfg.retry, cfg.log, cfg.def, cfg.autoplay);
+	int n = sprintf(b, "vol=%d\r\nring=%d\r\nstart=%d\r\nresume=%d\r\nretry=%d\r\ndef=%d\r\nauto=%d\r\n",
+			cfg.vol, cfg.ring_kb, cfg.start_sec, cfg.resume_sec, cfg.retry, cfg.def, cfg.autoplay);
+#ifdef RADIO_LOG_CFG
+	n += sprintf(b + n, "dbg=%d\r\n", cfg.log);
+#endif
 	if (cfg.fmt >= 0)
 		n += sprintf(b + n, "fmt=%d\r\n", cfg.fmt);
+	if (cfg.card)
+		n += sprintf(b + n, "card=1\r\n");
+#ifdef RADIO_SKIN
+	n += sprintf(b + n, "skin=%d\r\n", cfg.skin);
+#endif
 	write_file("radio.cfg", b, n);
 }
 
@@ -231,7 +303,7 @@ void stations_load(void)
 	int n, i = 0, full = 0;
 
 	nst = 0;
-	buf = read_file("stations.txt", 8192, &n);
+	buf = read_file("stations.txt", 16384, &n);
 	if (buf) {
 		char *s = buf;
 		while ((uint8_t)*s == 0xEF || (uint8_t)*s == 0xBB || (uint8_t)*s == 0xBF)

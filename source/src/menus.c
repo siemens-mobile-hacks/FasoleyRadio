@@ -3,11 +3,11 @@
  * item texts. Opened only from a key handler of ours (CreateMenu attaches the GUI to the CSM whose message
  * runs - s65-player: from a foreign timer -> MMI data abort).
  *
- *   Меню        Станции..., Настройки..., [SG: Тест звука], Свернуть, Выход
+ *   Меню        Станции..., Настройки..., [SG emulator: Тест звука], Свернуть, Выход
  *   Станции     the list (» playing, • default), + Добавить станцию; centre = play, left soft = options
  *   Станция     Играть, Изменить..., По умолчанию, Удалить
  *   Настройки   buffer, start/resume levels, [SG: output format], volume at start, auto-reconnect,
- *               play at start, log; select / right = next value, left = previous; saved to radio.cfg at once
+ *               play at start, [EL71: skin], [emulator: log]; select / right = next value, left = previous; saved to radio.cfg at once
  *   Изменить    the firmware's input dialog: name + URL -> stations.txt
  */
 #include "app.h"
@@ -20,7 +20,7 @@ static unsigned sig_st, sig_menu;
 static int opt_st;			/* the station of the options menu */
 
 enum { M_STATIONS, M_SETTINGS, M_TEST, M_MIN, M_EXIT };
-enum { R_RING, R_START, R_RESUME, R_FMT, R_VOL, R_RETRY, R_AUTO, R_LOG };
+enum { R_RING, R_START, R_RESUME, R_FMT, R_VOL, R_RETRY, R_AUTO, R_SKIN, R_LOG };
 enum { O_PLAY, O_EDIT, O_DEF, O_DEL };
 #define ST_ADD	(MAX_ST + 1)		/* row id of "+ Add station" (station rows = their index) */
 
@@ -31,8 +31,10 @@ static int make_rows(int s, unsigned char *r)
 	case SC_MENU:
 		r[n++] = M_STATIONS;
 		r[n++] = M_SETTINGS;
+#ifdef RADIO_LOG
 		if (be_has_test())
 			r[n++] = M_TEST;
+#endif
 		r[n++] = M_MIN;
 		r[n++] = M_EXIT;
 		break;
@@ -45,7 +47,12 @@ static int make_rows(int s, unsigned char *r)
 		r[n++] = R_VOL;
 		r[n++] = R_RETRY;
 		r[n++] = R_AUTO;
+#ifdef RADIO_SKIN
+		r[n++] = R_SKIN;
+#endif
+#ifdef RADIO_LOG_CFG
 		r[n++] = R_LOG;
+#endif
 		break;
 	case SC_ST:
 		for (i = 0; i < nst; i++)
@@ -93,7 +100,9 @@ static void menu_item(void *gui, int n, void *user)
 	switch (row_at(SC_MENU, n)) {
 	case M_STATIONS: item_text(gui, n, "Stations"); break;
 	case M_SETTINGS: item_text(gui, n, "Settings"); break;
+#ifdef RADIO_LOG
 	case M_TEST: item_text(gui, n, be_test_on() ? "Sound test: running" : "Sound test (to log)"); break;
+#endif
 	case M_MIN: item_text(gui, n, "Hide"); break;
 	default: item_text(gui, n, "Exit"); break;
 	}
@@ -116,7 +125,24 @@ static void set_item(void *gui, int n, void *user)
 	case R_VOL: sprintf(b, "Volume: %d/%d", cfg.vol, VOL_MAX); break;
 	case R_RETRY: sprintf(b, "Reconnect: %s", on_off(cfg.retry)); break;
 	case R_AUTO: sprintf(b, "Autoplay: %s", on_off(cfg.autoplay)); break;
-	default: sprintf(b, "Log: %s", on_off(cfg.log)); break;
+#ifdef RADIO_SKIN
+	case R_SKIN: {		/* "Виктор 89" as Unicode code points (literals here are cp1251) */
+		static const unsigned short victor[] = { 0x412, 0x438, 0x43A, 0x442, 0x43E, 0x440, ' ', '8', '9', 0 };
+		void *item = AllocMenuItem(gui);
+		WSHDR *w = AllocMenuWS(gui, 64);
+		const unsigned short *c;
+		wsprintf(w, "%t", cfg.skin ? "Skin: " : "Skin: Modern");
+		if (cfg.skin)
+			for (c = victor; *c; c++)
+				wsAppendChar(w, *c);
+		SetMenuItemText(gui, item, w, n);
+		return;
+	}
+#endif
+#ifdef RADIO_LOG_CFG
+	case R_LOG: sprintf(b, "Log: %s", on_off(cfg.log)); break;
+#endif
+	default: b[0] = 0; break;
 	}
 	item_text(gui, n, b);
 }
@@ -346,6 +372,7 @@ static int edit_save(GUI *gui)
 	if (!stations_save())
 		ShowMSG(1, (int)"Cannot write stations.txt");
 	rlog("station %d %s: %s = %s", edit_i, add ? "added" : "changed", stations[edit_i].name, stations[edit_i].url);
+	(void)add;
 	if (was)
 		play_station(edit_i);
 	return 1;
@@ -444,10 +471,12 @@ static int key_menu(GUI *gui, GUI_MSG *msg)
 	case M_SETTINGS:
 		open_menu(SC_SET, 0);
 		break;
+#ifdef RADIO_LOG
 	case M_TEST:
 		be_test_start();
 		ids[SC_MENU] = 0;
 		return 1;
+#endif
 	case M_MIN:
 		ids[SC_MENU] = 0;
 		minimize();
@@ -490,7 +519,12 @@ static void set_change(int r, int d)
 	}
 	case R_RETRY: cfg.retry = !cfg.retry; apply_retry(); break;
 	case R_AUTO: cfg.autoplay = !cfg.autoplay; break;
+#ifdef RADIO_SKIN
+	case R_SKIN: cfg.skin = !cfg.skin; break;	/* the screen redraws when it is on top again */
+#endif
+#ifdef RADIO_LOG_CFG
 	case R_LOG: cfg.log = !cfg.log; log_apply(); break;
+#endif
 	}
 	cfg_save();
 	if (r == R_FMT && station >= 0)	/* new format at once */

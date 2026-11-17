@@ -29,52 +29,10 @@ extern uint32_t host_pdp[];
 #endif
 #define DNS_MS		5000
 #define NCACHE		4
-#define NLOG_MAX	(64 * 1024)
-
-extern char elf_dir[];
 
 static int st = NET_NONE, fd = -1, port_;
 static char host_[96];
 int net_err;
-
-/* ---------- synchronous stage log ---------- */
-
-static char nl[200];
-static uint32_t nlog_size;
-static int nlog_fresh;
-extern int nlog_enabled;
-
-static void nlog_line(void)
-{
-	static char path[160];
-	unsigned err;
-	int h, n;
-	uint32_t ms = radio_ms();
-	static char out[240];
-
-	if (!nlog_enabled || nlog_size > NLOG_MAX || !elf_dir[0])
-		return;
-	strcpy(path, "0:\\radio-net.txt");	/* flash: never the card whose methods vstream_nsg.c wraps */
-	if (!nlog_fresh) {
-		nlog_fresh = 1;
-		_unlink(path, &err);
-	}
-	n = sprintf(out, "%u.%03u %s\r\n", (unsigned)(ms / 1000), (unsigned)(ms % 1000), nl);
-	h = _open(path, A_ReadWrite + A_BIN + A_Create + A_Append, P_READ + P_WRITE, &err);
-	if (h < 0)
-		return;
-	_write(h, out, n, &err);
-	_close(h, &err);
-	nlog_size += (uint32_t)n;
-}
-
-#define nlog(...) do { sprintf(nl, __VA_ARGS__); nlog_line(); } while (0)
-
-static void ipstr(char *s, uint32_t ip)
-{
-	sprintf(s, "%u.%u.%u.%u", (unsigned)(ip & 0xFF), (unsigned)(ip >> 8 & 0xFF), (unsigned)(ip >> 16 & 0xFF),
-		(unsigned)(ip >> 24));
-}
 
 /* ---------- TCP socket ---------- */
 
@@ -139,11 +97,7 @@ static int from_cache, dgen;
 
 static void do_connect(uint32_t ip)
 {
-	char s[20];
-
-	ipstr(s, ip);
 	fd = tcp_open(ip, port_);
-	nlog("connect %s:%d -> fd %d (err %d)", s, port_, fd, *socklasterr());
 	if (fd < 0) {
 		net_err = fd == -2 ? 2 : 3;
 		fd = -1;
@@ -165,13 +119,9 @@ static void dns_close(void)
 
 static void dns_try(void)
 {
-	char s[20];
-
 	dns_close();
 	while (dsrv < nsrv) {
-		ipstr(s, srv[dsrv]);
 		dfd = tcp_open(srv[dsrv], 53);
-		nlog("dns %s via %s:53 (tcp) -> fd %d (err %d)", host_, s, dfd, *socklasterr());
 		if (dfd >= 0) {
 			dphase = 1;
 			dlen = 0;
@@ -181,14 +131,12 @@ static void dns_try(void)
 		dfd = -1;
 		dsrv++;
 	}
-	nlog("dns %s: no server answered", host_);
 	st = NET_FAILED;
 	net_err = 1;
 }
 
-static void dns_next(const char *why)
+static void dns_next(void)
 {
-	nlog("dns server %d: %s", dsrv, why);
 	dsrv++;
 	dns_try();
 }
@@ -210,7 +158,6 @@ static void resolve(void)
 	did = (uint16_t)(radio_ms() * 2654435761u >> 16);
 	dqlen = dns_query(dq, host_, did);
 	if (!dqlen) {
-		nlog("dns: bad name '%s'", host_);
 		st = NET_FAILED;
 		net_err = 1;
 		return;
@@ -225,12 +172,11 @@ static void dns_poll(void)
 {
 	int n, r;
 	uint32_t ip;
-	char s[20];
 
 	if (dfd < 0 || st != NET_RESOLVING)
 		return;
 	if (radio_ms() - dt0 > DNS_MS) {
-		dns_next("timeout");
+		dns_next();
 		return;
 	}
 	if (dphase != 2)
@@ -241,34 +187,26 @@ static void dns_poll(void)
 	dlen += n;
 	if (dlen < 2 || dlen < 2 + (dbuf[0] << 8 | dbuf[1])) {
 		if (dlen >= DNS_MAX)
-			dns_next("answer too long");
+			dns_next();
 		return;
 	}
 	r = dns_answer(dbuf, dlen, did, &ip);
 	dns_close();
 	if (r < 0) {
-		dns_next("bad answer");
+		dns_next();
 		return;
 	}
 	if (!r) {
 		int rc = dlen > 5 ? dbuf[5] & 0x0F : -1;
 		if (rc == 3) {		/* NXDOMAIN: the name does not exist */
-			nlog("dns %s: no such name (rcode 3)", host_);
 			st = NET_FAILED;
 			net_err = 1;
 			return;
 		}
 		/* REFUSED/SERVFAIL (the phone's NAP refused some TCP queries, D54) or no A record: next server */
-		sprintf(nl, "rcode %d%s", rc, rc ? "" : ", no A record");
-		{
-			static char why[32];
-			strcpy(why, nl);
-			dns_next(why);
-		}
+		dns_next();
 		return;
 	}
-	ipstr(s, ip);
-	nlog("dns %s = %s", host_, s);
 	cache_put(host_, ip);
 	from_cache = 0;
 	do_connect(ip);
@@ -307,7 +245,6 @@ void net_open(const char *host, int port)
 	strncpy(host_, host, sizeof(host_) - 1);
 	host_[sizeof(host_) - 1] = 0;
 	port_ = port;
-	nlog("open %s:%d", host_, port);
 	from_cache = 0;
 	if (parse_ip(host_, &ip))
 		do_connect(ip);
@@ -346,8 +283,6 @@ int net_recv(void *buf, int len)
 
 void net_close(void)
 {
-	if (fd >= 0 || dfd >= 0)
-		nlog("close fd %d dns fd %d (state %d)", fd, dfd, st);
 	dns_close();
 	if (fd >= 0)
 		closesocket(fd);
@@ -367,9 +302,8 @@ void net_event(int event, int id)
 		case ENIP_SOCK_CONNECTED:
 			if (dphase == 1) {
 				int n = send(dfd, dq, dqlen, 0);
-				nlog("dns connected, query %d bytes sent (%d)", dqlen, n);
 				if (n != dqlen) {
-					dns_next("send failed");
+					dns_next();
 					return;
 				}
 				dphase = 2;
@@ -384,7 +318,7 @@ void net_event(int event, int id)
 			int g = dgen;
 			dns_poll();	/* the answer may come with the close */
 			if (g == dgen)
-				dns_next("closed");
+				dns_next();
 		}
 			break;
 		}
@@ -395,13 +329,11 @@ void net_event(int event, int id)
 	switch (event) {
 	case ENIP_SOCK_CONNECTED:
 		if (st == NET_CONNECTING) {
-			nlog("connected fd %d", fd);
 			st = NET_UP;
 		}
 		break;
 	case ENIP_SOCK_REMOTE_CLOSED:
 	case ENIP_SOCK_CLOSED:
-		nlog("fd %d closed (event %X, state %d)", fd, event, st);
 		if (st == NET_CONNECTING && from_cache)
 			cache_drop(host_);
 		st = NET_CLOSED;

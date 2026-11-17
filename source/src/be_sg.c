@@ -8,7 +8,12 @@
 #include "fwlib.h"
 
 const char be_fw_any[] = "S65v58 / SK65v50";
+const int be_idle_volkeys = 0;
+int be_idle_ui_on_top(void) { return 0; }
+void be_idle_guard(int h, int at_start) { (void)h; (void)at_start; }
+#ifdef RADIO_LOG
 const int be_sync_log = 0;
+#endif
 const int be_vol_min = 1, be_vol_max = 5, be_vol_def = 3;
 const char be_emu_ext[] = "pcm";
 /* 64 KB: 4 s of 128k; the decode, not the buffer, is the limit here */
@@ -58,6 +63,7 @@ const char *be_fw_name(void)
 	return fw == VS_FW_SK65V50 ? "SK65v50" : "S65v58";
 }
 
+#ifdef RADIO_LOG
 void be_log_install(void)
 {
 	int i;
@@ -70,6 +76,7 @@ void be_log_path(char *p)
 {
 	sprintf(p, "%s\\radio-log.txt", elf_dir);
 }
+#endif
 
 /* SK65v50 audio DSP image (A0B41FF2, see s65-mp3/release-sk65/0b_*): first word 0x0030 = replaced by the
  * 10931-patched one (0b_ v2: full-rate PCM), 0x0026 = stock (only 8 kHz plays) */
@@ -82,16 +89,20 @@ static int sk65_dsp_patched(void)
 #endif
 }
 
+#ifdef RADIO_LOG
 static uint32_t os_ticks(void)
 {
 	return GetSessionAge();
 }
+#endif
 
 /* no "fmt" in radio.cfg: SK65v50 22 kHz mono with the patched DSP, else 8 kHz 16 bit (the stock one plays
  * only 8 kHz, D30 on the phone), S65v58 as the stream */
 void be_setup(void)
 {
+#ifdef RADIO_LOG
 	dec->clock = os_ticks;		/* decode time in the per-second log */
+#endif
 	if (cfg.fmt < 0 || cfg.fmt >= NFMT)
 		cfg.fmt = fw != VS_FW_SK65V50 ? 0 : sk65_dsp_patched() ? 5 : 1;
 	rlog("output format %d (%s)%s", cfg.fmt, fmts[cfg.fmt].name,
@@ -192,6 +203,7 @@ void be_tick(void)
 	test_tick();
 }
 
+#ifdef RADIO_LOG
 /* PCM served / of it silence padded / decode time per frame (this second) */
 void be_second(void)
 {
@@ -222,6 +234,7 @@ void be_second(void)
 	f0 = f;
 	t0 = tk;
 }
+#endif
 
 void be_close(void)
 {
@@ -232,12 +245,14 @@ void be_quit_poll(void)
 {
 }
 
+#ifdef RADIO_LOG
 const char *be_slot_name(int slot)
 {
 	static const char *const sn[] = { "destroy", "read", "write", "tell", "seek", "getc", "release", "push",
 		"get", "size", "notify", "remain", "one" };
 	return slot < (int)(sizeof(sn) / sizeof(sn[0])) ? sn[slot] : "?";
 }
+#endif
 
 const char *be_msg(int what)
 {
@@ -261,7 +276,8 @@ void be_fmt_desc(char *b)
 			dec->out_bits == 8 ? " 8bit" : "");
 }
 
-/* ------------------------------------------------------------------ sound test */
+/* ------------------------------------------------------------------ sound test (results in the log) */
+#ifdef RADIO_LOG
 /* SK65: the stream gets 2 chunks and the player never asks again. The test plays real WAV files (no hook)
  * through the same PlayFile, one format each, 3 s apart, with every report in the log: which formats does
  * the firmware (+ the 10931 port) play from PlayFile? The screen shows the test running. */
@@ -383,4 +399,24 @@ void be_test_line(char *b)
 {
 	sprintf(b, "Test %d/%d: %dHz %s %dbit", test_i + 1, NTEST, tests[test_i].rate, tests[test_i].ch == 2 ? "st" : "m",
 		tests[test_i].bits);
+}
+#else
+static void test_tick(void) {}
+int be_has_test(void) { return 0; }
+int be_test_on(void) { return 0; }
+void be_test_start(void) {}
+void be_test_stop(void) {}
+void be_test_line(char *b) { b[0] = 0; }
+#endif
+
+/* D123: the PlayFile reports are handled by app.c */
+int be_on_msg(struct GBS_MSG *msg)
+{
+	(void)msg;
+	return -1;
+}
+
+void be_stop_play(int h)
+{
+	PlayMelody_StopPlayback(h);
 }

@@ -19,9 +19,22 @@
  *
  * Keys: centre/green play-stop, left/right station (switches at once while playing), up/down * # volume keys
  * volume, 1-9 station n, 0 stations, left soft the menu (menus.c), right soft/red minimize.
+ *
+ * EL71 (RADIO_SKIN) "classic" (Victor89) skin (cfg.skin = 1, Settings > Skin), in the spirit of the x65 media player, all
+ * drawn here (no firmware bitmaps): as the x65 player (reference picture): blue with scanlines, cyan lines, title bar
+ * (film strip + note + scrolling title),
+ * the reels = frames of the user's GIF (tools/mkreels.py -> reels_data.h, 8 frames 210x90, one unpacked at a time
+ * into a 75 KB ARGB8888 image) that turn while playing (~4 fps: only playing, on top and with the display lit; frame
+ * 0 still otherwise), one bar = the network buffer, big "m:ss / 0:07". Soft keys: left Стоп/Играть (=
+ * centre), right Опции (the menu); red minimizes; the rest as in the modern skin. Full screen (no icon bar).
+ * Menu name "Виктор 89".
+ * EL71: no redraws at all while the display light is off (GetIlluminationDataTable()[3], display level).
  */
 #include "app.h"
 #include "build_id.h"
+#ifdef RADIO_SKIN
+#include "reels_data.h"
+#endif
 
 #define RGB(r, g, b)	{ r, g, b, 100 }
 static const char C_BG[4] = RGB(0x10, 0x17, 0x20), C_PANEL[4] = RGB(0x1B, 0x28, 0x36);
@@ -68,6 +81,15 @@ static int xdisp, xdir, xwait;
 static void make_title(void)
 {
 	CutWSTR(ws_title, 0);
+#ifdef RADIO_SKIN
+	if (cfg.skin) {		/* the title bar: StreamTitle, else the station's name */
+		int st = station >= 0 ? station : screen_st;
+		if (station >= 0 && radio.icy.title[0])
+			text_ws(ws_title, radio.icy.title);
+		else if (st < nst)
+			text_ws(ws_title, stations[st].name);
+	} else
+#endif
 	if (station >= 0 && radio.icy.title[0])
 		text_ws(ws_title, radio.icy.title);
 	else if (station >= 0 && radio.icy.name[0])
@@ -82,8 +104,19 @@ static void make_title(void)
 	xwait = 4;
 }
 
+#ifdef RADIO_SKIN
+static int cl_title_x(void)
+{
+	return 46;	/* after the film strip and note icons */
+}
+#endif
+
 static int title_box_w(void)
 {
+#ifdef RADIO_SKIN
+	if (cfg.skin)
+		return W - cl_title_x() - pad;
+#endif
 	return W - 4 * pad - 2;
 }
 
@@ -136,11 +169,13 @@ static const char *state_text(char *b, const char **col, char *detail)
 		*col = C_BUF;
 		return "Starting...";
 	}
+#ifdef RADIO_LOG
 	if (be_test_on()) {
 		*col = C_BUF;
 		be_test_line(detail);
 		return "Sound test";
 	}
+#endif
 	switch (pstate) {
 	case P_IDLE:
 		if (note) {
@@ -192,6 +227,14 @@ static const char *state_text(char *b, const char **col, char *detail)
 		}
 		if (radio.reconnects)
 			sprintf(detail + strlen(detail), "%sreconnects %d", detail[0] ? ", " : "", radio.reconnects);
+		if (play_t0) {	/* how long this station plays (reconnects and refills included) */
+			uint32_t t = (radio_ms() - play_t0) / 1000;
+			if (t >= 3600)
+				sprintf(b, "Playing %u:%02u:%02u", (unsigned)(t / 3600), (unsigned)(t / 60 % 60), (unsigned)(t % 60));
+			else
+				sprintf(b, "Playing %u:%02u", (unsigned)(t / 60), (unsigned)(t % 60));
+			return b;
+		}
 		return "Playing";
 	case P_CALL:
 		*col = C_BUF;
@@ -199,6 +242,27 @@ static const char *state_text(char *b, const char **col, char *detail)
 	}
 	return "";
 }
+
+#ifdef RADIO_SKIN
+/* EL71: the display's light level now (0 = off, sleeping); the emulator has no table */
+static int display_lit(void)
+{
+	const char *t = GetIlluminationDataTable();	/* A8D8726C: 0x38 per device, display first, +3 = level */
+	return !t || t[3] != 0;
+}
+
+/* classic skin: the reels turn (playing, sound going) */
+static int reels_turn(void)
+{
+	return cfg.skin && pstate == P_PLAY && !dec->waiting;
+}
+
+/* the reels' frame: a new one every REELS_MS (~250 ms, the GIF's speed) while they turn, else 0 */
+static int reel_phase(void)
+{
+	return reels_turn() ? (int)(radio_ms() / REELS_MS % REELS_N) : 0;
+}
+#endif
 
 /* hash of what is drawn (quantized): redraw only when it changes */
 #define MIX(s, v)	((s) = (s) * 31u + (unsigned)(v))
@@ -228,6 +292,10 @@ static unsigned signature(void)
 	MIX(s, title_st);
 	MIX(s, xdisp);
 	MIX(s, radio.icy.name[0]);
+#ifdef RADIO_SKIN
+	MIX(s, cfg.skin);
+	MIX(s, reel_phase());
+#endif
 	return s;
 }
 
@@ -268,6 +336,182 @@ static void fmt_kbs(char *b, uint32_t bps)
 	sprintf(b, "%d.%d KB/s", (int)(bps / 1024), (int)(bps % 1024 * 10 / 1024));
 }
 
+/* ------------------------------------------------------------------ classic skin (EL71) */
+#ifdef RADIO_SKIN
+/* as the x65 player (reference picture): blue with scanlines, light cyan lines and bar, white text */
+static const char K_BG[4] = RGB(0x24, 0x52, 0xA6), K_SCAN[4] = RGB(0x1C, 0x44, 0x8E);
+static const char K_NAVY[4] = RGB(0x1C, 0x40, 0x88), K_LINE[4] = RGB(0x48, 0xCC, 0xF2);
+static const char K_BARF[4] = RGB(0xA8, 0xF2, 0xFF), K_BARE[4] = RGB(0x2E, 0x6C, 0xC0);
+static const char K_BARK[4] = RGB(0x3A, 0x8C, 0xE0), K_MARK[4] = RGB(0x14, 0x3C, 0x90);
+static const char K_NOTE[4] = RGB(0x5C, 0xE0, 0x4A), K_BLACK[4] = RGB(0x08, 0x10, 0x20);
+
+/* body: blue, every other row a little darker */
+static void scan_bg(int y1, int y2)
+{
+	int y;
+	fill(0, y1, W - 1, y2, K_BG);
+	for (y = y1 + 1; y <= y2; y += 2)
+		fill(0, y, W - 1, y, K_SCAN);
+}
+
+/* the reels: frames of the user's GIF (tools/mkreels.py), the one shown unpacked into an ARGB8888 image */
+static IMGHDR reels_img;
+static int reels_frame = -1;
+
+static void reels_free(void)
+{
+	if (reels_img.bitmap)
+		mfree(reels_img.bitmap);
+	reels_img.bitmap = 0;
+	reels_frame = -1;
+}
+
+static int reels_unpack(int f)
+{
+	const uint8_t *p = reels_rle + reels_off[f], *e = reels_rle + reels_off[f + 1];
+	uint32_t *o, *oe;
+	if (f == reels_frame)
+		return 1;
+	if (!reels_img.bitmap && !(reels_img.bitmap = malloc(REELS_W * REELS_H * 4)))
+		return 0;
+	o = (uint32_t *)reels_img.bitmap;
+	oe = o + REELS_W * REELS_H;
+	while (p < e && o < oe) {
+		int t = *p++;
+		if (t < 0x80) {
+			uint32_t c = reels_pal[*p++];
+			for (t++; t-- && o < oe;)
+				*o++ = c;
+		} else
+			for (t -= 0x7F; t-- && o < oe;)
+				*o++ = reels_pal[*p++];
+	}
+	reels_img.w = REELS_W;
+	reels_img.h = REELS_H;
+	reels_img.bpnum = IMGHDR_TYPE_ARGB8888;
+	reels_frame = f;
+	return 1;
+}
+
+/* a beamed note (green, dark outline) in [x, x + w] x [y, y + h] */
+static void note_icon(int x, int y, int w, int h, const char *c)
+{
+	int r = w / 4 + 1, hy = y + h - r - 1, s1 = x + 2 * r - 1, s2 = x + w - 1, k;
+	for (k = 1; k >= 0; k--) {	/* outline, then the colour */
+		const char *cc = k ? K_BLACK : c;
+		DrawRoundedFrame(x - k, hy - r - k, x + 2 * r - 1 + k, hy + r + k, r, r, 0, cc, cc);
+		DrawRoundedFrame(s2 - 2 * r + 1 - k, hy - r - 2 - k, s2 + k, hy + r - 2 + k, r, r, 0, cc, cc);
+		fill(s1 - 1 - k, y + 2 - k, s1 + k, hy, cc);
+		fill(s2 - 1 - k, y - k, s2 + k, hy - 2, cc);
+		fill(s1 - 1 - k, y + 1 - k, s2 + k, y + 3 + k, cc);
+	}
+}
+
+/* a film strip: white band with dark holes, top and bottom */
+static void film_icon(int x, int y, int w, int h)
+{
+	int i;
+	fill(x, y, x + w - 1, y + h - 1, K_BLACK);
+	fill(x + 1, y + 1, x + w - 2, y + h - 2, C_TXT);
+	fill(x + 1, y + h / 2 - 1, x + w - 2, y + h / 2, K_BLACK);
+	fill(x + w / 2, y + 3, x + w / 2, y + h - 4, K_BLACK);
+	for (i = x + 2; i < x + w - 3; i += 4) {
+		fill(i, y + 2, i + 1, y + 3, K_BLACK);
+		fill(i, y + h - 4, i + 1, y + h - 3, K_BLACK);
+	}
+}
+
+/* ws = these Unicode code points (string literals here are cp1251) */
+static void ws_chars(const unsigned short *c)
+{
+	CutWSTR(ws, 0);
+	while (*c)
+		wsAppendChar(ws, *c++);
+}
+
+/* Victor89 skin: title bar, reels, one bar (buffer), big time, soft keys - nothing else */
+static void classic_draw(void)
+{
+	char v[32];
+	int f_t = FONT_MEDIUM_BOLD, h_t = GetFontYSIZE(f_t), f_time = FONT_LARGE_BOLD, h_time = GetFontYSIZE(f_time);
+	int th = h_t + 14, sk_h = h_t + 14, top = th + 2, bottom = H - sk_h - 2, area = bottom - top, x;
+	int bh = 26, bx1 = W / 8, bx2 = W - 1 - W / 8, by;
+	uint32_t t = play_t0 && station >= 0 ? (radio_ms() - play_t0) / 1000 : 0;
+
+	/* bands, separator lines, the frame round everything */
+	fill(0, 0, W - 1, th - 1, K_NAVY);
+	fill(0, th, W - 1, th + 1, K_LINE);
+	scan_bg(top, bottom - 1);
+	fill(0, bottom, W - 1, bottom + 1, K_LINE);
+	fill(0, bottom + 2, W - 1, H - 1, K_NAVY);
+	fill(0, 0, 1, H - 1, K_LINE);
+	fill(W - 2, 0, W - 1, H - 1, K_LINE);
+	fill(0, H - 2, W - 1, H - 1, K_LINE);
+
+	/* title: film strip, note, the title */
+	film_icon(6, (th - 14) / 2, 20, 14);
+	note_icon(29, (th - 16) / 2, 12, 16, K_NOTE);
+	x = cl_title_x();
+	if (title_w > title_box_w())
+		DrawScrollString(ws_title, x, (th - h_t) / 2, x + title_box_w(), (th + h_t) / 2, xdisp, f_t,
+				 TEXT_ALIGNLEFT, C_TXT, C_NONE);
+	else
+		DrawString(ws_title, x, (th - h_t) / 2, x + title_box_w(), (th + h_t) / 2, f_t, TEXT_ALIGNLEFT,
+			   C_TXT, C_NONE);
+
+	/* the reels: centre at ~35% of the body */
+	if (reels_unpack(reel_phase()))
+		DrawIMGHDR((W - REELS_W) / 2, top + area * 35 / 100 - REELS_H / 2, &reels_img);
+
+	/* the bar (network buffer): light cyan fill, blue frame, dark left end mark */
+	by = top + area * 64 / 100 - bh / 2;
+	{
+		int rs = ring_size(&net_ring), fx = bx1 + 2 + (int)((uint64_t)used_b() * (bx2 - bx1 - 4) / rs);
+		fill(bx1, by, bx2, by + bh - 1, K_BARK);
+		fill(bx1 + 2, by + 2, bx2 - 2, by + bh - 3, K_BARE);
+		if (fx > bx1 + 2)
+			fill(bx1 + 2, by + 2, fx, by + bh - 3, K_BARF);
+		fill(bx1 + 2, by + 2, bx1 + 4, by + bh - 3, K_MARK);
+	}
+
+	/* time: elapsed / 0:07 (the user's constant); the slash drawn (not every big font has one) */
+	if (t >= 3600)
+		sprintf(v, "%u:%02u:%02u", (unsigned)(t / 3600), (unsigned)(t / 60 % 60), (unsigned)(t % 60));
+	else
+		sprintf(v, "%u:%02u", (unsigned)(t / 60), (unsigned)(t % 60));
+	by += bh;
+	{
+		int wl = text_w(v, f_time), wr = text_w("0:07", f_time), sw = h_time / 3 + 14, tw = wl + sw + wr;
+		int ty = by + (bottom - by - h_time) / 2, tx = (W - tw) / 2, k;
+		if (tw > W - 8) {	/* h:mm:ss: elapsed only */
+			text(v, 0, ty, W - 1, h_time, f_time, TEXT_ALIGNMIDDLE, C_TXT);
+		} else {
+			text(v, tx, ty, tx + wl + 2, h_time, f_time, TEXT_ALIGNLEFT, C_TXT);
+			text("0:07", tx + wl + sw, ty, W - 1, h_time, f_time, TEXT_ALIGNLEFT, C_TXT);
+			for (k = 0; k < 3; k++)
+				DrawLine(tx + wl + sw / 2 - h_time / 6 + k - 1, ty + h_time * 5 / 6, tx + wl + sw / 2 + h_time / 6 + k - 1,
+					 ty + h_time / 6, 0, C_TXT);
+		}
+	}
+
+	/* soft keys (Victor89 only): left Стоп / Играть, right Опции (the menu); centre: pause / play sign */
+	{
+		static const unsigned short stop[] = { 0x421, 0x442, 0x43E, 0x43F, 0 }, play[] = { 0x418, 0x433, 0x440, 0x430,
+			0x442, 0x44C, 0 }, opts[] = { 0x41E, 0x43F, 0x446, 0x438, 0x438, 0 };
+		int cx = W / 2, cy = bottom + 2 + sk_h / 2, r = h_t / 3, ty = bottom + 2 + (sk_h - h_t) / 2;
+		ws_chars(station >= 0 ? stop : play);
+		DrawString(ws, 8, ty, cx - r - 4, ty + h_t, f_t, TEXT_ALIGNLEFT, C_TXT, C_NONE);
+		ws_chars(opts);
+		DrawString(ws, cx + r + 4, ty, W - 9, ty + h_t, f_t, TEXT_ALIGNRIGHT, C_TXT, C_NONE);
+		if (station >= 0) {
+			fill(cx - r, cy - r, cx - r / 3 - 1, cy + r, C_TXT);
+			fill(cx + r / 3 + 1, cy - r, cx + r, cy + r, C_TXT);
+		} else
+			tri(cx - r + 1, cy - r, cx - r + 1, cy + r, cx + r, cy, C_TXT);
+	}
+}
+#endif
+
 static void OnRedraw(GUI *g)
 {
 	char b[96], d[96], v[64];
@@ -281,6 +525,13 @@ static void OnRedraw(GUI *g)
 		title_st = station >= 0 ? station : -1 - screen_st;
 		make_title();
 	}
+#ifdef RADIO_SKIN
+	if (cfg.skin) {
+		classic_draw();
+		return;
+	}
+	reels_free();		/* modern again: the frame buffer back */
+#endif
 	fill(0, Y0, W - 1, H - 1, C_BG);
 
 	/* header */
@@ -433,6 +684,9 @@ static void OnRedraw(GUI *g)
 /* ------------------------------------------------------------------ GUI */
 
 static unsigned shown_sig;
+#ifdef RADIO_SKIN
+static int bar_off;		/* we disabled the icon bar (Victor89 full screen) */
+#endif
 static int since;
 
 void screen_redraw(void)
@@ -447,15 +701,27 @@ void screen_redraw(void)
 void screen_tick(void)
 {
 	static int scroll_t;
+	int per = period;
 	if (!gui_id || !IsGuiOnTop(gui_id))
 		return;
+#ifdef RADIO_SKIN
+	if (!display_lit())
+		return;		/* sleeping: nothing drawn; the change shows at the first lit tick */
+	if (reels_turn())
+		per = 2;	/* ~4 fps: the reel phase changes every 250 ms */
+#endif
 	since++;
 	if (++scroll_t >= period) {
 		scroll_t = 0;
 		scroll_step();
 	}
-	if (since >= period && signature() != shown_sig)
+	if (since >= per && signature() != shown_sig)
 		screen_redraw();
+}
+
+int screen_on_top(void)
+{
+	return gui_id && IsGuiOnTop(gui_id);
 }
 
 void screen_free(void)
@@ -466,6 +732,9 @@ void screen_free(void)
 		FreeWS(ws_title);
 	ws = ws_title = 0;
 	gui_id = 0;
+#ifdef RADIO_SKIN
+	reels_free();
+#endif
 }
 
 static void OnCreate(GUI *g, malloc_func_t f)
@@ -477,14 +746,37 @@ static void OnCreate(GUI *g, malloc_func_t f)
 static void OnClose(GUI *g, mfree_func_t f)
 {
 	(void)f;
+#ifdef RADIO_SKIN
+	if (bar_off) {
+		bar_off = 0;
+		DisableIconBar(0);
+	}
+#endif
 	g->state = CSM_GUI_STATE_CLOSED;
 }
+
+#ifdef RADIO_SKIN
+
+/* Victor89: the whole 240x320 (no icon bar: canvas from 0, flag30 = 2 as vNes/MC, DisableIconBar as duke3d) */
+static void full_screen(GUI *g, int on)
+{
+	StoreXYWHtoRECT(&canvas, 0, on ? 0 : YDISP, ScreenW(), ScreenH() - (on ? 0 : YDISP));
+	g->flag30 = on ? 2 : 0;
+	if (on != bar_off) {
+		bar_off = on;
+		DisableIconBar(on);
+	}
+}
+#endif
 
 static void OnFocus(GUI *g, malloc_func_t m, mfree_func_t f)
 {
 	(void)m;
 	(void)f;
 	g->state = CSM_GUI_STATE_FOCUSED;
+#ifdef RADIO_SKIN
+	full_screen(g, cfg.skin);
+#endif
 	metrics();
 	title_seq = -1;		/* fonts may differ: measure again */
 }
@@ -494,6 +786,12 @@ static void OnUnfocus(GUI *g, mfree_func_t f)
 	(void)f;
 	if (g->state != CSM_GUI_STATE_FOCUSED)
 		return;
+#ifdef RADIO_SKIN
+	if (bar_off) {		/* the icon bar back for whatever comes on top */
+		bar_off = 0;
+		DisableIconBar(0);
+	}
+#endif
 	g->state = CSM_GUI_STATE_UNFOCUSED;
 }
 
@@ -515,6 +813,14 @@ static int OnKey(GUI *g, GUI_MSG *msg)
 		m = KEY_DOWN;	/* repeat */
 	if (m != KEY_DOWN)
 		return 0;
+#ifdef RADIO_SKIN
+	if (cfg.skin && k == RIGHT_SOFT) {	/* Victor89: right Опции = the menu, left Стоп/Играть = centre */
+		menu_open();
+		return 0;
+	}
+	if (cfg.skin && k == LEFT_SOFT)
+		k = ENTER_BUTTON;
+#endif
 	switch (k) {
 	case LEFT_SOFT:
 		menu_open();
@@ -578,8 +884,13 @@ int screen_create(MAIN_CSM *csm)
 	if (!ws_title)
 		ws_title = AllocWS(ICY_TITLE + 8);
 	metrics();
-	screen_st = cfg.def >= 0 && cfg.def < nst ? cfg.def : 0;
 	StoreXYWHtoRECT(&canvas, 0, YDISP, ScreenW(), ScreenH() - YDISP);
+#ifdef RADIO_SKIN
+	if (cfg.skin) {
+		StoreXYWHtoRECT(&canvas, 0, 0, ScreenW(), ScreenH());
+		g->gui.flag30 = 2;
+	}
+#endif
 	g->gui.canvas = &canvas;
 	g->gui.methods = &methods;
 	g->gui.item_ll.data_mfree = mfree_adr();

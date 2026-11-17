@@ -1,5 +1,5 @@
 /*
- * Virtual stream file for EL71v45 (ELKA build, RADIO_PASS; interface in vstream.h).
+ * Virtual stream file for EL71v45 (ELKA build) and S75v52 (NSG build), RADIO_PASS; interface in vstream.h.
  *
  * On EL71 the firmware does not read media through the Obs file-stream table the way S65 does: in the
  * pmb887x emulation (2026-11-15, radio/RE-EL71.txt) the media player opened the Obs file stream (FUN_a0d218ac,
@@ -61,13 +61,16 @@ typedef struct {		/* 0x18 */
 	op_fn *ops;
 } DRIVE;
 
-volatile uint32_t vs_reads, vs_seen, vs_detects, vs_nonzero;
+volatile uint32_t vs_reads;
 const char *vs_fail;
+#ifdef RADIO_LOG
+volatile uint32_t vs_seen, vs_detects, vs_nonzero;
 VS_EV vs_ev[VS_EV_N];			/* calls on our handles (kind EV_G, slot = method index) */
 volatile uint32_t vs_ev_wr, vs_ev_rd, vs_ev_lost;
 volatile uint16_t vs_now;
 uint32_t vs_table[16];
-extern char elf_dir[];
+#endif
+char vs_dir[128];		/* folder of the virtual file (be_elka.c: 1:\\FasoleyRadio, else the elf's) */
 
 static DRIVE *host;
 static DRIVER *host_driver;
@@ -88,6 +91,7 @@ static uint32_t hist_end;	/* stream bytes delivered so far (virtual position of 
 static uint32_t hist_have;	/* how many of the last delivered bytes are in hist[] (<= HIST) */
 static uint8_t hist[HIST];
 
+#ifdef RADIO_LOG
 #define EV_CAP	400			/* events per start (the player reads ~1/s; the probe a few) */
 static uint32_t ev_n;
 
@@ -112,6 +116,12 @@ static void ev(int slot, int h, uint32_t a, uint32_t b, uint32_t r)
 	e->r = r;
 	vs_ev_wr++;
 }
+#else
+static inline void ev(int slot, int h, uint32_t a, uint32_t b, uint32_t r)
+{
+	(void)slot, (void)h, (void)a, (void)b, (void)r;
+}
+#endif
 
 static void Enter(void) { LockSched(); ++callers; UnlockSched(); }
 static void Leave(void) { LockSched(); --callers; UnlockSched(); }
@@ -184,7 +194,7 @@ static void fresh(uint8_t *buf, uint32_t n)
 	if ((enabled || draining) && fill_fn) {
 		fill_fn(fill_ctx, buf, (int)n);
 		vs_reads++;
-		vs_nonzero++;
+		VS_DIAG(vs_nonzero++;)
 	} else
 		bzero_(buf, n);
 	for (k = 0; k < n; ) {
@@ -376,7 +386,7 @@ static int w_fopen(ARGS)
 
 	if (!enabled || !ours_path(a, b))
 		return ORIG(11);
-	vs_seen++;
+	VS_DIAG(vs_seen++;)
 	LockSched();
 	for (i = 0; i < MAX_H && hs[i].used; i++)
 		;
@@ -385,7 +395,7 @@ static int w_fopen(ARGS)
 		hs[i].h = h_base + i;
 		hs[i].pos = 0;
 		h = h_base + i;
-		vs_detects++;
+		VS_DIAG(vs_detects++;)
 	}
 	ev(11, h, (uint32_t)c, (uint32_t)s, (uint32_t)i);
 	UnlockSched();
@@ -430,7 +440,7 @@ static int read_at(int slot, ARGS)
 	if (slot == 12 && n > 0xFFFF)
 		n = 0xFFFF;
 	Enter();
-	vs_seen++;
+	VS_DIAG(vs_seen++;)
 	i = (short)a - h_base;
 	if (n < 0)
 		n = 0;
@@ -470,7 +480,7 @@ static int w_lseek(ARGS)
 
 	if (!ours_h(a))
 		return ORIG(16);
-	vs_seen++;
+	VS_DIAG(vs_seen++;)
 	i = (short)a - h_base;
 	LockSched();
 	np = c == 1 ? (int64_t)hs[i].pos + b : c == 2 ? (int64_t)DATA_SIZE + b : (int64_t)b;
@@ -499,7 +509,7 @@ static int w_fstat(ARGS)
 {
 	if (!ours_h(a))
 		return ORIG(1);
-	vs_seen++;
+	VS_DIAG(vs_seen++;)
 	fill_stats((FSTATS *)b);
 	LockSched();
 	ev(1, a, (uint32_t)s, 0, 0);
@@ -512,7 +522,7 @@ static int w_stats(ARGS)
 {
 	if (!enabled || !ours_path(a, b))
 		return ORIG(20);
-	vs_seen++;
+	VS_DIAG(vs_seen++;)
 	fill_stats((FSTATS *)c);
 	LockSched();
 	ev(20, -1, (uint32_t)s, 0, 0);
@@ -542,6 +552,18 @@ FAIL4(26)	/* +68 fwrite */
 
 /* ---------- install ---------- */
 
+/* EL71v45 or S75v52 (NSG, not ELKA: FasoleyRadio_NSG.elf). The file system (drive/driver tables 0x18/0x10,
+ * methods, sync wrappers EL71 A056E5C8.. = S75 A025317C.., FS heap 4E3, card process 0x4100 answering 0x1A2) is
+ * the same code; S75 is told by its FS_MemAlloc (library 4E3 = A0252008). */
+static int nsg_fw(void)
+{
+#ifdef HOST_TEST
+	return VS_FW_EL71V45;
+#else
+	return __sys_switab_addres[0x4E3] == (int)0xA0252008u ? VS_FW_S75V52 : VS_FW_EL71V45;
+#endif
+}
+
 /* the drive entry of the elf's drive and its driver; 0 = not there or someone else's methods (under LockSched) */
 static int find_host(void)
 {
@@ -568,14 +590,14 @@ int vs_install(void)
 	const char *p;
 
 	if (installed || probed)
-		return VS_FW_EL71V45;
+		return nsg_fw();
 	if (RAM_DRIVERS - RAM_DRIVES != 0x78)	/* drivers right after the 5 drives (all NSG builds checked) */
 		return VS_FW_NONE;
-	if (elf_dir[0] < '0' || elf_dir[0] > '9' || elf_dir[1] != ':')
+	if (vs_dir[0] < '0' || vs_dir[0] > '9' || vs_dir[1] != ':')
 		return VS_FW_NONE;
-	drv_no = elf_dir[0] - '0';
+	drv_no = vs_dir[0] - '0';
 	our_len = 0;
-	for (p = elf_dir; *p && our_len < (int)sizeof(our_path) - 20; p++)
+	for (p = vs_dir; *p && our_len < (int)sizeof(our_path) - 20; p++)
 		our_path[our_len++] = (char)low((unsigned char)*p);
 	our_path[our_len++] = '\\';
 	for (p = VS_NAME; *p; p++)
@@ -586,12 +608,13 @@ int vs_install(void)
 	{	/* stats of the real file for fstat/GetFileStats of ours (its size replaced) */
 		static char p[170];
 		uint32_t err;
-		sprintf(p, "%s\\%s", elf_dir, VS_NAME);
+		sprintf(p, "%s\\%s", vs_dir, VS_NAME);
 		GetFileStats(p, &st_tmpl.fs, &err);
 	}
 #endif
 	LockSched();
 	ok = find_host();
+#ifdef RADIO_LOG
 	if (ok) {
 		vs_table[0] = (uint32_t)host;
 		vs_table[1] = (uint32_t)host->ops;
@@ -602,6 +625,7 @@ int vs_install(void)
 		vs_table[6] = (uint32_t)host->ops[13];
 		vs_table[7] = (uint32_t)host->ops[16];
 	}
+#endif
 	UnlockSched();
 	if (!ok) {
 		vs_fail = "Drive methods already taken";
@@ -610,7 +634,7 @@ int vs_install(void)
 	}
 	host_cepid = drv_no == 4 ? 0x4100 : 0x4101;
 	probed = 1;
-	return VS_FW_EL71V45;
+	return nsg_fw();
 }
 
 /* swap the drive's methods for ours (once; they stay until vs_uninstall at exit) */
@@ -704,7 +728,7 @@ void vs_start(vs_fill_f fill, void *ctx, int rate, int ch)
 	(void)rate;
 	(void)ch;
 	hook();
-	ev_n = 0;
+	VS_DIAG(ev_n = 0;)
 	LockSched();
 	enabled = 0;
 	draining = 0;
