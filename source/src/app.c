@@ -934,21 +934,43 @@ static int key_hook(int key, int m)
 /* --- the daemon CSM */
 
 /* D172: with the display off (sleep) the firmware lowers the CPU clock and the stream stutters. While we play,
- * hold one high-clock request: SetCpuClockTempHi(2) (A06252E0) counts requests per level ("UI-MSOCPU"),
- * SetCpuClockLow(2) gives ours back. Balanced: one up per play, one down at stop/exit. */
+ * hold a high-clock request: SetCpuClockTempHi(2) (A06252E0) counts requests per level ("UI-MSOCPU"),
+ * SetCpuClockLow(2) takes one back.
+ * D188: the MMI's own activity boost (A05C4D16) calls TempHi(2) only when the clock is not 208 MHz yet, but its
+ * timer (A05C4CB0) always calls Low(2): with our request holding 208 it skips its "up" and its "down" takes
+ * OUR count -> the phone sleeps at the low clock again (user: lag after sleep with D184). So once a second
+ * while playing: clock below 208 -> one more TempHi(2) (counted); at stop/exit all of ours are given back. */
 #if defined(RADIO_OBS) && !defined(RADIO_EMU)
-static int cpu_hi;
+static int cpu_hi, cpu_reqs;
 #endif
 static void cpu_clock(int want)
 {
 #if defined(RADIO_OBS) && !defined(RADIO_EMU)
+	static int ticks;
+	if (want && cpu_hi) {
+		if (++ticks >= 10) {
+			ticks = 0;
+			if (GetCPUClock() < 208) {
+				SetCpuClockTempHi(2);
+				cpu_reqs++;
+				rlog("cpu clock was lowered: request again (%d)", cpu_reqs);
+			}
+		}
+		return;
+	}
 	if (want == cpu_hi)
 		return;
 	cpu_hi = want;
-	if (want)
+	ticks = 0;
+	if (want) {
 		SetCpuClockTempHi(2);
-	else
-		SetCpuClockLow(2);
+		cpu_reqs = 1;
+	} else {
+		while (cpu_reqs > 0) {
+			SetCpuClockLow(2);
+			cpu_reqs--;
+		}
+	}
 	rlog("cpu clock request %s", want ? "high" : "released");
 #else
 	(void)want;

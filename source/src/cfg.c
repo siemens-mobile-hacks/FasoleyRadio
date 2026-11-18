@@ -24,6 +24,7 @@ static const struct { const char *name, *url; } builtin[] = {
 	{ "Radio Paradise 32k", "http://localhost:18080/mp3-32" },
 	{ "Radio Paradise 128k", "http://127.0.0.1:18080/mp3-128" },
 #else
+	{ "Fasoley Radio", "https://fasoley.net/radio_128.mp3" },	/* first = default (cfg.def 0), 128k: all phones (user) */
 #if !defined(SGOLD) && !defined(RADIO_OBS)	/* D185: > 190k: not on EL71 and S65/SK65 (user) */
 	{ "Party FM 320k", "http://stream.partyfm.dk/Party320/" },
 #endif
@@ -72,9 +73,6 @@ static const struct { const char *name, *url; } builtin[] = {
 	{ "Radio Sarcheshme 96k", "http://sarcheshmeh.icdndhcp.com:18452/stream" },
 	{ "Radio Caroline 128k", "http://78.129.202.200:8040/;" },
 	{ "SomaFM Groove Salad 128k", "https://ice5.somafm.com/groovesalad-128-mp3" },
-#ifndef SGOLD	/* D185: > 128k: not on S65/SK65 (user) */
-	{ "Fasoley Radio", "https://fasoley.net/radio.mp3" },
-#endif
 #endif
 };
 #define NBUILTIN	((int)(sizeof(builtin) / sizeof(builtin[0])))
@@ -179,7 +177,7 @@ void cfg_load(void)
 	cfg.fmt = -1;			/* the phone's default (be_setup) */
 	cfg.card = 0;
 #ifdef RADIO_SKIN
-	cfg.skin = 0;
+	cfg.skin = 0;		/* Modern by default (user) */
 #endif
 	if (!(buf = read_file("radio.cfg", 1024, &n)))
 		return;
